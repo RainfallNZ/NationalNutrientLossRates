@@ -1,0 +1,130 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Load libraries and external functions
+
+```{r}
+if (!require(sf)) install.packages("sf"); library(sf)
+if (!require(dplyr)) install.packages("dplyr"); library(dplyr)
+if (!require(pbapply)) install.packages("pbapply"); library(pbapply)
+if (!require(terra)) install.packages("terra"); library(terra)
+
+source("ProcessingFunctions.R")
+```
+
+Set Directories
+```{r}
+
+ProjectDirectory <- "D:\\Projects\\LWP\\OLW_AttenuationUncertainty"
+ProjectDataDirectory <- file.path(ProjectDirectory,"Data")
+GISDirectory <- file.path(ProjectDataDirectory,"GIS")
+
+```
+
+Create the catchment polygon shape files for the water quality observation locations
+```{r}
+#Load the watershed and river network data. Note that these are large.
+#The RECV2 geodatabase. version  from Ton with correct attribute names.
+REC2V2GeoDatabase <- "D:\\Projects\\data\\RECV2.5\\nzRec2_v5.gdb" #This is the NIWA version
+
+RiverNetwork <- sf::st_read(REC2V2GeoDatabase, layer = "riverlines")
+Watersheds <- sf::st_read(REC2V2GeoDatabase, layer = "rec2ws")
+
+#Load the Site data. Provided by Ton as RData files. One for TN and one for TP, but 
+# both load a data frame called "BestLoads", and both (supposedly) with the same reach ID's
+load(file.path(ProjectDataDirectory,"BestTNloads_22May17_y2020.rdata"))
+Locations <- BestLoads$nzsegment
+names(Locations) <- BestLoads$sID
+
+remove(BestLoads)
+
+CatchmentList <- pblapply(Locations, function(Location) {
+  Catchment <- CatchmentCreator(Watersheds = Watersheds, ReachNetwork = RiverNetwork, OutletReach = Location)
+  return(Catchment)
+})
+Catchments <- do.call(rbind,CatchmentList)
+Catchments$sID <- names(CatchmentList)
+st_write(Catchments,dsn = file.path(GISDirectory,"Catchments"),driver = "ESRI Shapefile",append = FALSE)
+
+#Clear out some space
+remove("BestLoads","RiverNetwork","Watersheds")
+
+#Plot the result as a check it is right
+plot(st_geometry(Catchments))
+```
+
+
+Reclass the LCDBV5 and save
+```{r}
+#The LCDBV5 geodatabase. version  from downloaded from LRIS 
+LCDBV5GeoDatabase <- "D:\\Projects\\data\\LCDBV5\\lcdb-v50-land-cover-database-version-50-mainland-new-zealand.gdb"
+
+#This takes ~1 minute to load and gives a warning that can be ignored
+LCDBV5 <- sf::st_read(LCDBV5GeoDatabase)
+
+LandUseLookupTable <- read.csv(file.path(ProjectDataDirectory,"LCDBV5ReclassTable.csv"))
+
+LCDBV5 <- merge(LCDBV5,LandUseLookupTable[,c("Class_2018","SrinivasanLandUse")],all.x=TRUE)
+
+#Takes 34 minutes!
+Start_time = Sys.time()
+LandUse <- LCDBV5 %>% select(Name_2018,Class_2018,SrinivasanLandUse) %>% group_by(SrinivasanLandUse) %>% summarise() %>% st_cast(to="POLYGON")
+End_Time = Sys.time()
+End_Time - Start_time
+
+#Even this takes time...About a minute
+st_write(LandUse,dsn = file.path(GISDirectory,"LandUse"),driver = "ESRI Shapefile",append = FALSE)
+
+#Clear out some space
+remove("LCDBV5")
+
+#Plot the result as a check it is right, another minute or two...
+plot(LandUse[,"SrinivasanLandUse"],border=NA)
+
+#Clear out some more space
+remove("LandUse")
+
+```
+
+Now need to do slope
+```{r}
+#The LRI Slope geodatabase. version  from downloaded from LRIS 
+LRIGeoDatabase <- "D:\\Projects\\data\\LRI\\Slope\\nzlri-slope.gdb"
+LRISlope <- sf::st_read(LRIGeoDatabase)
+
+SlopeLookupTable <- read.csv(file.path(ProjectDataDirectory,"LRISlopeReclassTable.csv"))
+
+LRISlope <- merge(LRISlope,SlopeLookupTable[,c("LRI..SLOPE1S..Class.ID","Srinivasan.slope.type")],
+                  by.x = "SLOPE1S",by.y = "LRI..SLOPE1S..Class.ID",all.x=TRUE)
+Slope <- LRISlope %>% select(Srinivasan.slope.type) %>% group_by(Srinivasan.slope.type) %>% summarise() %>% st_cast(to="POLYGON")
+st_write(Slope,dsn = file.path(GISDirectory,"Slope"),driver = "ESRI Shapefile",append = FALSE)
+
+#Clear out some space
+remove("LRISlope")
+
+#Plot the result as a check it is right
+plot(Slope[,"Srinivasan.slope.type"],border=NA)
+
+#Clear out some more space
+remove("Slope")
+```
+
+And  moisture
+```{r}
+#The MfE Irrigated area geodatabase. version downloaded from MfE Data portal 
+IrrigationGeoDatabase <- "D:\\Projects\\data\\MfE\\Irrigation\\irrigated-land-area-raw-2020-update.gdb"
+Irrigation<- sf::st_read(IrrigationGeoDatabase)
+
+RainfallFile <- "D:\\Projects\\data\\MfE\\Rain19722016\\totann7216.tif"
+
+RainfallRaster <- rast(RainfallFile)
+
+#Reclassify <1100, 1100-1700, >1700
+
+#Convert to polygons
+
+#Union with irrigation
+```
+
