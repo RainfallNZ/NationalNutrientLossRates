@@ -27,6 +27,34 @@ LeachRateLUTFile <- file.path(ProjectDataDirectory,"LandUseToLossRatesV0.csv")
 
 ```
 
+Create default Catchment-scale and Farm-scale grids that cover the country.
+CAtchment scales grid are 10 km x 10 km squares with the bottom left hand corner at
+NZTM coordinate Easting=1000000 Northing=4700000
+Topright at Easting=2100000, Northing=6200000
+```{r}
+ExtentCoordinates <- data.frame("Easting"=c(1000000,2100000),"Northing"=c(4700000,6200000))
+ExtentPolygon <- ExtentCoordinates %>% 
+  st_as_sf(coords = c("Easting","Northing"),crs= "epsg:2193") %>%
+  st_bbox() %>%
+  st_as_sfc()
+
+CatchmentScaleResolution <- 10000
+CatchmentScaleGrid <- rast(vect(ExtentPolygon),resolution = CatchmentScaleResolution)
+
+CatchmentScalePolygonGrid <-sf::st_as_sf(st_make_grid(vect(ExtentPolygon), 
+                                          cellsize = CatchmentScaleResolution))
+
+#This next line gets the centroid coordinates of each polygon, subtracts the bottom left coordinates and half the cell resolution, converts them to km, and and adds 1 (to keep indexing from 1) and converts to a fixed width format
+NumericIDs <- st_centroid(st_geometry(CatchmentScalePolygonGrid)) %>% st_coordinates() %>% as.data.frame() %>% mutate(across(1,~((. - ExtentCoordinates$Easting[1] - CatchmentScaleResolution/2) / 10000 + 1))) %>% 
+  mutate(across(2,~((. - ExtentCoordinates$Northing[1] - CatchmentScaleResolution/2) / 10000 + 1))) %>% 
+  mutate_all(~sprintf("%03g",.))
+
+CatchmentScalePolygonGrid$CSID <- paste0("CS",apply(NumericIDs,1,paste,collapse=""))
+
+CatchmentScalePolygonGrid %>% st_write(file.path(GISDirectory,"SrinivasanTypes.gpkg"),layer = "CatchmentScaleGrid", delete_layer = TRUE)
+```
+
+
 Create the catchment polygon shape files for the water quality observation locations
 ```{r,eval = FALSE}
 #Load the watershed and river network data. Note that these are large.
@@ -215,15 +243,24 @@ NutrientLookupTable <- read.csv(LeachRateLUTFile)
 
 Start_Time = Sys.time()
 #Initialise an empty output dataframe
-CatchmentOutputData <- data.frame(NULL)
+NutrientOutputData       <- data.frame(NULL)
+FarmScaleMetadata        <- data.frame(NULL)
+CatchmentScaleMetadata   <- data.frame(NULL)
+WaterQualitySiteMetadata <- data.frame(NULL)
+
 
 #work through each catchment using a for loop as the apply doesn't work well with sf objects
 #For all Catchments this takes 3 Hours!!
-for (WaterQualitySite in Catchments$sID ){
+for (WaterQualitySite in Catchments$sID[1] ){
   Catchment <- Catchments[Catchments$sID == WaterQualitySite,]
   CatchmentArea <- st_area(Catchment) %>% units::set_units(NULL) / 10000
+  
+  WaterQualitySiteMetadata <- data.frame("sID"=Catchment$sID,
+                                         "Hectares"=CatchmentArea,
+                                         "nzsegment"=Catchment$nzsegment)
 
-  #Subset and intersect the Srinivasan spatial data to just the catchment
+  #Subset and intersect the Srinivasan spatial data to just the catchment.
+  #Seems to need removal of any existing CatchmentLandUse object before it is re-created
   rm(CatchmentLandUse)
   
   #Note that the intersections raise a warning:
@@ -240,8 +277,11 @@ for (WaterQualitySite in Catchments$sID ){
   #Get the area of each typology and set the units to hectares, but clear the units attribute to avoid managing units later on
   CatchmentLandUseSlopeMoisture$area.ha <- st_area(CatchmentLandUseSlopeMoisture) %>% units::set_units(NULL)  / 10000
 
-  #Use the look up table to define TP and TN for each land use
+  #Use the look up table to define TP and TN for each srinivasan class
   CatchmentLandUseSlopeMoisture <- merge(CatchmentLandUseSlopeMoisture,NutrientLookupTable,by.x = c("Srinivasan.slope.type","Srinivasan.Moisture.Type","LandUse"),by.y = c("Slope","Moisture","LandUse"))
+  
+  #About here, convert to a high resolution raster of TN, TP and Srinivasan class
+  # Then use 
   
 #Ditch the geometry to make further processing easier
   rm(CatchmentData)
@@ -274,13 +314,15 @@ for (WaterQualitySite in Catchments$sID ){
     
     #Calculate %area for each land use
   
-  CatchmentOutputData <- dplyr::bind_rows(CatchmentOutputData,CatchmentWide)
+  NutrientOutputData <- dplyr::bind_rows(NutrientOutputData,CatchmentWide)
   #write to a csv file
 
 }
 End_Time = Sys.time()
 End_Time - Start_Time
 
-write.table(CatchmentOutputData,file=file.path(ProjectDataDirectory,"Output.csv"),sep=",",row.names = FALSE,append=TRUE,quote = FALSE)
+write.table(NutrientOutputData,file=file.path(ProjectDataDirectory,"Output.csv"),sep=",",row.names = FALSE,append=TRUE,quote = FALSE)
 ```
+
+
 
