@@ -75,3 +75,26 @@ CatchmentCreator <- function(Watersheds=RECV2Watersheds,ReachNetwork=RECV2ReachN
     union <- rbind.fill(op1, op2, op3)
     return(st_as_sf(union))
   }
+
+  
+  #' A function to aggregate REC watersheds based on stream order
+  #'
+  #'RECV2WaterShedAggregate() merges watersheds of river reaches of a strahler order 
+  #'less than Order into their downstream watershed
+  #'@param Watersheds A simple feature polygon object of RECV2 watersheds with nzsegment attribute
+  #'@parma RiverLines A simple feature lilne object of RECV2 river lines with nzsegment 
+  #'StreamOrde, FROM_NODE and TO_NODE attributes
+  #'@author Tim Kerr
+  #'@return A simple feature (sf) object with the nzsegment attribute matching the lowest RECV2 reach
+  #'@export
+  #'
+  
+  #During testing load an example watershed and riverlines file
+  ExampleWatersheds <- st_read
+  #ExampleRiverLines <- 
+  
+  RECV2WaterShedAggregate <- function(WaterSheds=NA,RiverLines=NA,Order= 2) {
+   #Start from the bottom of the river network
+    OutletReaches <- RiverLines %>% filter(TO_NODE == FROM_NODE | !To_NODE %in% FROM_NODE)
+
+  }

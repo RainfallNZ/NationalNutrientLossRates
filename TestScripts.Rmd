@@ -31,6 +31,9 @@ Create default Catchment-scale and Farm-scale grids that cover the country.
 CAtchment scales grid are 10 km x 10 km squares with the bottom left hand corner at
 NZTM coordinate Easting=1000000 Northing=4700000
 Topright at Easting=2100000, Northing=6200000
+
+FarmScale are 250 m x 250 m scale grid aligned to the CatchmentScale Grid
+We need a grid with FarmScale rows within each CatchmentScaleCell, one with columns within each catchmentScaleCell, and one with CatchmentScale row number, and one with CatchmentScaleColumn Number
 ```{r}
 ExtentCoordinates <- data.frame("Easting"=c(1000000,2100000),"Northing"=c(4700000,6200000))
 ExtentPolygon <- ExtentCoordinates %>% 
@@ -39,7 +42,9 @@ ExtentPolygon <- ExtentCoordinates %>%
   st_as_sfc()
 
 CatchmentScaleResolution <- 10000
-CatchmentScaleGrid <- rast(vect(ExtentPolygon),resolution = CatchmentScaleResolution)
+CatchmentScaleGrid <- rast(vect(ExtentPolygon),resolution = CatchmentScaleResolution,vals=1)
+CatchmentScaleGridRow <- rast(CatchmentScaleGrid,vals=nrow(CatchmentScaleGrid)+1-rowFromCell(CatchmentScaleGrid,cells(CatchmentScaleGrid)))
+CatchmentScaleGridColumn <- rast(CatchmentScaleGrid,vals=colFromCell(CatchmentScaleGrid,cells(CatchmentScaleGrid)))
 
 CatchmentScalePolygonGrid <-sf::st_as_sf(st_make_grid(vect(ExtentPolygon), 
                                           cellsize = CatchmentScaleResolution))
@@ -52,7 +57,25 @@ NumericIDs <- st_centroid(st_geometry(CatchmentScalePolygonGrid)) %>% st_coordin
 CatchmentScalePolygonGrid$CSID <- paste0("CS",apply(NumericIDs,1,paste,collapse=""))
 
 CatchmentScalePolygonGrid %>% st_write(file.path(GISDirectory,"SrinivasanTypes.gpkg"),layer = "CatchmentScaleGrid", delete_layer = TRUE)
+
+FarmScaleResolution <- 250
+FarmScaleGrid <- rast(vect(ExtentPolygon),resolution = FarmScaleResolution,vals=1)
+
+#I want to number cells from 1 to 40 in rows (bottom to top) and columns (left to right) within each CatchmentScale grid
+RowIDs <- 41 - (rowFromCell(FarmScaleGrid,cells(FarmScaleGrid)) %% 40)
+RowIDs[RowIDs==41] <- 1
+FarmScaleGridRow <- rast(FarmScaleGrid,vals=RowIDs)
+
+ColumnIDs <- colFromCell(FarmScaleGrid,cells(FarmScaleGrid)) %% 40
+ColumnIDs[ColumnIDs == 0] <- 40
+FarmScaleGridColumn <- rast(FarmScaleGrid,vals=ColumnIDs)
+
+FarmScaleCSRow <- disagg(CatchmentScaleGridRow,fact=40,method="near")
+FarmScaleCSColumn <- disagg(CatchmentScaleGridColumn,fact=40,method="near")
+
+FarmScaleStack <- rast(list("FSRow"=FarmScaleGridRow,"FSCol"=FarmScaleGridColumn,"CSRow"=FarmScaleCSRow,"CSCol"=FarmScaleCSColumn))
 ```
+
 
 
 Create the catchment polygon shape files for the water quality observation locations
@@ -241,24 +264,31 @@ Catchments <- st_read(dsn = file.path(GISDirectory,"Catchments","Catchments.shp"
 #Load the nutrient loss rate coefficient look-up data
 NutrientLookupTable <- read.csv(LeachRateLUTFile)
 
+
+```
+
+
+```{r}
 Start_Time = Sys.time()
+
 #Initialise an empty output dataframe
+rm(NutrientOutputData)
 NutrientOutputData       <- data.frame(NULL)
 FarmScaleMetadata        <- data.frame(NULL)
 CatchmentScaleMetadata   <- data.frame(NULL)
 WaterQualitySiteMetadata <- data.frame(NULL)
-
-
 #work through each catchment using a for loop as the apply doesn't work well with sf objects
 #For all Catchments this takes 3 Hours!!
-for (WaterQualitySite in Catchments$sID[1] ){
+for (WaterQualitySite in Catchments$sID[1:2] ){
   Catchment <- Catchments[Catchments$sID == WaterQualitySite,]
   CatchmentArea <- st_area(Catchment) %>% units::set_units(NULL) / 10000
   
   WaterQualitySiteMetadata <- data.frame("sID"=Catchment$sID,
                                          "Hectares"=CatchmentArea,
                                          "nzsegment"=Catchment$nzsegment)
+  
 
+  
   #Subset and intersect the Srinivasan spatial data to just the catchment.
   #Seems to need removal of any existing CatchmentLandUse object before it is re-created
   rm(CatchmentLandUse)
@@ -274,54 +304,105 @@ for (WaterQualitySite in Catchments$sID[1] ){
   CatchmentLandUseSlope <- st_intersection(CatchmentLandUse,Slope)
   CatchmentLandUseSlopeMoisture <- st_intersection(CatchmentLandUseSlope,Moisture)
   
-  #Get the area of each typology and set the units to hectares, but clear the units attribute to avoid managing units later on
-  CatchmentLandUseSlopeMoisture$area.ha <- st_area(CatchmentLandUseSlopeMoisture) %>% units::set_units(NULL)  / 10000
-
-  #Use the look up table to define TP and TN for each srinivasan class
+  # #Get the area of each typology and set the units to hectares, but clear the units attribute to avoid managing units later on
+  # CatchmentLandUseSlopeMoisture$area.ha <- st_area(CatchmentLandUseSlopeMoisture) %>% units::set_units(NULL)  / 10000
+  # 
+  # #Use the look up table to define TP and TN for each srinivasan class
   CatchmentLandUseSlopeMoisture <- merge(CatchmentLandUseSlopeMoisture,NutrientLookupTable,by.x = c("Srinivasan.slope.type","Srinivasan.Moisture.Type","LandUse"),by.y = c("Slope","Moisture","LandUse"))
   
-  #About here, convert to a high resolution raster of TN, TP and Srinivasan class
-  # Then use 
+  #do the remaining processing as rasters
   
-#Ditch the geometry to make further processing easier
-  rm(CatchmentData)
-  CatchmentData <- st_drop_geometry(CatchmentLandUseSlopeMoisture)
+  #Intersect the FarmScale raster stack with the catchment
+  FarmScaleMasked <- mask(FarmScaleStack,vect(Catchment)) %>% crop(vect(Catchment))
+  #FarmScaleUniqueID <- rast(FarmScaleMasked[[1]],vals=seq(1,ncell(FarmScaleMasked[[1]])))
   
-  #Calculate load for each polygon
-  CatchmentData$TN.Load <- CatchmentData$TN.Loss.Rate * CatchmentData$area.ha
-  CatchmentData$TP.Load <- CatchmentData$TP.Loss.Rate * CatchmentData$area.ha
+  #Convert to a high resolution (25 m) raster of Srinivasan Type 
+  HighResGrid <- rast(ext(FarmScaleMasked),resolution= 25, vals=1)
+  TypeGrid <- rasterize(vect(CatchmentLandUseSlopeMoisture),y=HighResGrid,field="Type")
+  
+  #Get the names of the unique Types in this catchment
+  Types <- unique(CatchmentLandUseSlopeMoisture$Type)
+  
+  #Build a stack of single-Type rasters
+  TypeStack <- lapply((1:length(Types)),function(x) {TypeGrid %in% x}) %>% rast()
 
-  #Group and summarise on Land Use
-  CatchmentLandUseData <- CatchmentData %>% group_by(LandUse) %>% 
-    summarise(areaPct = sum(area.ha)/CatchmentArea,area.ha = sum(area.ha),sID = first(sID),nzsegment=first(nzsegment),
-              TN = sum(TN.Load)/sum(area.ha),TP = sum(TP.Load)/sum(area.ha))
+  #Aggregate each layer to the FarmScale unit (i.e. 6.25 hectaes, which is 10 x the high resolution scale)
+  AggregateStack <-lapply(TypeStack,function(SingleType){
+    aggregate(SingleType,fact=10,fun='sum')
+  }) %>% rast()
   
+  CatchmentGrid <- values(AggregateStack, dataframe=TRUE)
+  names(CatchmentGrid) <- Types
+  CatchmentGrid$sID <- Catchment$sID
+  CatchmentGrid$FSRow <- values(FarmScaleMasked$FSRow)
+  CatchmentGrid$FSCol <- values(FarmScaleMasked$FSCol)
+  CatchmentGrid$CSRow <- values(FarmScaleMasked$CSRow)
+  CatchmentGrid$CSCol <- values(FarmScaleMasked$CSCol)
+  
+  #Go from wide to long
+  CatchmentLong <- pivot_longer(CatchmentGrid,Types,names_to="Type",values_to = "Cells")
+  CatchmentLong <- CatchmentLong[CatchmentLong$Cells > 0,]
+  
+  #Add TN and TP loss rates from lookup table
+  CatchmentLong <- merge(CatchmentLong,NutrientLookupTable[,c("Type","TN.Loss.Rate","TP.Loss.Rate")],by.x = c("Type"),by.y = c("Type"))
+  
+  #Parse out the land use, moisture class and slope
+  CatchmentLong$Srinivasan.slope.type <- strsplit(CatchmentLong$Type,"[-]")[[1]][2]
+  CatchmentLong$Srinivasan.Moisture.Type<- strsplit(CatchmentLong$Type,"[-]")[[1]][3]
+  CatchmentLong$LandUse<- strsplit(CatchmentLong$Type,"[-]")[[1]][1]
+  
+  #Calculate area
+  CatchmentLong$Hectares <- CatchmentLong$Cells * 0.0625
+  
+  #Devise UniqueFarmScaleID
+  CatchmentLong$FSID <- paste0("FS",sprintf("%02g",CatchmentLong$FSCol),
+                          sprintf("%02g",CatchmentLong$FSRow))
+  CatchmentLong$CSID <- paste0("CS",sprintf("%03g",CatchmentLong$CSCol),
+                          sprintf("%03g",CatchmentLong$CSRow))
+  CatchmentLong$UniqueID <- paste0(CatchmentLong$sID,"_",CatchmentLong$CSID,CatchmentLong$FSID)
+  #Drop some of the columns
+  CatchmentLong <- CatchmentLong %>% select(!c(FSRow,FSCol,CSRow,CSCol,Cells))
+  
+  #Re-order columns
+  CatchmentLong <- CatchmentLong[,c("UniqueID","sID","CSID","FSID","Hectares",
+                                    "Type","LandUse","Srinivasan.slope.type","Srinivasan.Moisture.Type",
+                                    "TN.Loss.Rate","TP.Loss.Rate")]
+  
+# #Ditch the geometry to make further processing easier
+#   rm(CatchmentData)
+#   CatchmentData <- st_drop_geometry(CatchmentLandUseSlopeMoisture)
+#   
+#   #Calculate load for each polygon
+#   CatchmentData$TN.Load <- CatchmentData$TN.Loss.Rate * CatchmentData$area.ha
+#   CatchmentData$TP.Load <- CatchmentData$TP.Loss.Rate * CatchmentData$area.ha
+# 
+#   #Group and summarise on Land Use
+#   CatchmentLandUseData <- CatchmentData %>% group_by(LandUse) %>% 
+#     summarise(areaPct = sum(area.ha)/CatchmentArea,area.ha = sum(area.ha),sID = first(sID),nzsegment=first(nzsegment),
+#               TN = sum(TN.Load)/sum(area.ha),TP = sum(TP.Load)/sum(area.ha))
+#   
+# 
+#   CatchmentWide <- pivot_wider(CatchmentLandUseData,
+#                                id_cols = c(sID,nzsegment),
+#                                names_from=LandUse,
+#                                values_from = c(area.ha,TN,TP),
+#                                names_glue = "{LandUse}_{.value}")
+#   
+#   CatchmentWide$area.ha <- CatchmentArea
+#   CatchmentWide$TNLoad <- sum(CatchmentData$TN.Load)
+#   CatchmentWide$TPLoad <- sum(CatchmentData$TP.Load)
+#   CatchmentWide$TNLossRate <- (CatchmentWide$TNLoad / CatchmentArea) 
+#   CatchmentWide$TPLossRate <- (CatchmentWide$TPLoad / CatchmentArea) 
 
-  CatchmentWide <- pivot_wider(CatchmentLandUseData,
-                               id_cols = c(sID,nzsegment),
-                               names_from=LandUse,
-                               values_from = c(area.ha,TN,TP),
-                               names_glue = "{LandUse}_{.value}")
   
-  CatchmentWide$area.ha <- CatchmentArea
-  CatchmentWide$TNLoad <- sum(CatchmentData$TN.Load)
-  CatchmentWide$TPLoad <- sum(CatchmentData$TP.Load)
-  CatchmentWide$TNLossRate <- (CatchmentWide$TNLoad / CatchmentArea) 
-  CatchmentWide$TPLossRate <- (CatchmentWide$TPLoad / CatchmentArea) 
-  
-  #Calculate total area, TN and TP
-  #CatchmentWide$TotalArea <- 
-    
-    #Calculate %area for each land use
-  
-  NutrientOutputData <- dplyr::bind_rows(NutrientOutputData,CatchmentWide)
+  NutrientOutputData <- dplyr::bind_rows(NutrientOutputData,CatchmentLong)
   #write to a csv file
 
 }
 End_Time = Sys.time()
 End_Time - Start_Time
 
-write.table(NutrientOutputData,file=file.path(ProjectDataDirectory,"Output.csv"),sep=",",row.names = FALSE,append=TRUE,quote = FALSE)
+write.table(NutrientOutputData,file=file.path(ProjectDataDirectory,"OutputV2.csv"),sep=",",row.names = FALSE,append=TRUE,quote = FALSE)
 ```
 
 
