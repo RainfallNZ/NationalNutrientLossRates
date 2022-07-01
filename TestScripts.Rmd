@@ -272,14 +272,16 @@ NutrientLookupTable <- read.csv(LeachRateLUTFile)
 Start_Time = Sys.time()
 
 #Initialise an empty output dataframe
-rm(NutrientOutputData)
+if (exists("NutrientOutputData")) rm(NutrientOutputData)
 NutrientOutputData       <- data.frame(NULL)
 FarmScaleMetadata        <- data.frame(NULL)
 CatchmentScaleMetadata   <- data.frame(NULL)
 WaterQualitySiteMetadata <- data.frame(NULL)
 #work through each catchment using a for loop as the apply doesn't work well with sf objects
 #For all Catchments this takes 3 Hours!!
-for (WaterQualitySite in Catchments$sID[1:2] ){
+for (WaterQualitySite in Catchments$sID[25] ){
+  print(WaterQualitySite)
+  print(paste(which(WaterQualitySite==Catchments$sID),"of",nrow(Catchments)))
   Catchment <- Catchments[Catchments$sID == WaterQualitySite,]
   CatchmentArea <- st_area(Catchment) %>% units::set_units(NULL) / 10000
   
@@ -291,7 +293,7 @@ for (WaterQualitySite in Catchments$sID[1:2] ){
   
   #Subset and intersect the Srinivasan spatial data to just the catchment.
   #Seems to need removal of any existing CatchmentLandUse object before it is re-created
-  rm(CatchmentLandUse)
+  if (exists("CatchmentLandUse")) rm(CatchmentLandUse)
   
   #Note that the intersections raise a warning:
   #"attribute variables are assumed to be spatially constant throughout all geometries"
@@ -310,29 +312,38 @@ for (WaterQualitySite in Catchments$sID[1:2] ){
   # #Use the look up table to define TP and TN for each srinivasan class
   CatchmentLandUseSlopeMoisture <- merge(CatchmentLandUseSlopeMoisture,NutrientLookupTable,by.x = c("Srinivasan.slope.type","Srinivasan.Moisture.Type","LandUse"),by.y = c("Slope","Moisture","LandUse"))
   
+  #Sometimes the intersections result in lines, so just extract the polygons. If you don't then 
+  #you can't convert the resulting sf to a SpatVector type, as they don't handle mixed types.
+  CatchmentLandUseSlopeMoisture <- st_collection_extract(CatchmentLandUseSlopeMoisture, "POLYGON")
+  
   #do the remaining processing as rasters
   
   #Intersect the FarmScale raster stack with the catchment
   FarmScaleMasked <- mask(FarmScaleStack,vect(Catchment)) %>% crop(vect(Catchment))
   #FarmScaleUniqueID <- rast(FarmScaleMasked[[1]],vals=seq(1,ncell(FarmScaleMasked[[1]])))
   
-  #Convert to a high resolution (25 m) raster of Srinivasan Type 
+  #Convert to a high resolution (25 m) raster of Srinivasan Type
+  #Need to convert the Srinivasan Type to a factor so that we know what the raster values are
   HighResGrid <- rast(ext(FarmScaleMasked),resolution= 25, vals=1)
+  CatchmentLandUseSlopeMoisture$Type <- as.factor(CatchmentLandUseSlopeMoisture$Type)
+  
+  #The next line converts the "Type" polygon shape file into a raster with numbers from 0 to length(Type)-1 
+  #representing the Type factors. That is, the raster values are the factor levels - 1.
+  #This was not obvious to me.
   TypeGrid <- rasterize(vect(CatchmentLandUseSlopeMoisture),y=HighResGrid,field="Type")
   
   #Get the names of the unique Types in this catchment
-  Types <- unique(CatchmentLandUseSlopeMoisture$Type)
-  
-  #Build a stack of single-Type rasters
-  TypeStack <- lapply((1:length(Types)),function(x) {TypeGrid %in% x}) %>% rast()
+  Types <- levels(CatchmentLandUseSlopeMoisture$Type)
 
+  #Build a stack of single-Type rasters
+  TypeStack <- lapply((0:(length(Types)-1)),function(x) {TypeGrid %in% x}) %>% rast()
+  names(TypeStack) <- Types
   #Aggregate each layer to the FarmScale unit (i.e. 6.25 hectaes, which is 10 x the high resolution scale)
   AggregateStack <-lapply(TypeStack,function(SingleType){
     aggregate(SingleType,fact=10,fun='sum')
   }) %>% rast()
   
   CatchmentGrid <- values(AggregateStack, dataframe=TRUE)
-  names(CatchmentGrid) <- Types
   CatchmentGrid$sID <- Catchment$sID
   CatchmentGrid$FSRow <- values(FarmScaleMasked$FSRow)
   CatchmentGrid$FSCol <- values(FarmScaleMasked$FSCol)
@@ -406,4 +417,30 @@ write.table(NutrientOutputData,file=file.path(ProjectDataDirectory,"OutputV2.csv
 ```
 
 
+```{r}
+#Create a function that builds a metadata file of unique FarmScale units, CatchmentScale Units and Water Quality Site Catchments.
 
+MetadataCreator <- function(OutputData = NutrientOutputData, WaterQualitySiteData = Catchments){
+  FarmScaleMetadata <- OutputData %>% group_by(UniqueID) %>% summarise(Hectares = sum(Hectares), sID = first(sID), CSID = first(CSID), FSID = first(FSID))
+  FarmScaleMetadata$NZTM_Easting <- as.numeric(substr(FarmScaleMetadata$CSID,3,5)) * 10000 -10000 + 1000000 + as.numeric(substr(FarmScaleMetadata$FSID,3,4)) * 250 -250 + 125
+  FarmScaleMetadata$NZTM_Northing <- as.numeric(substr(FarmScaleMetadata$CSID,6,8)) * 10000 -10000 + 4700000 + as.numeric(substr(FarmScaleMetadata$FSID,5,6)) * 250 -250 + 125
+  
+  CatchmentScaleMetadata <- OutputData %>% group_by(CSID) %>% summarise(CSID = first(CSID))
+  CatchmentScaleMetadata$NZTM_Easting <- as.numeric(substr(CatchmentScaleMetadata$CSID,3,5)) * 10000 -10000 + 1005000
+  CatchmentScaleMetadata$NZTM_Northing <- as.numeric(substr(CatchmentScaleMetadata$CSID,6,8)) * 10000 - 10000 + 4705000
+  
+  WaterQualitySiteData$Hectares <- st_area(Catchments) %>% units::set_units(NULL) / 10000
+  WaterQualitySiteMetaData <- st_drop_geometry(Catchments)
+  
+  Metadata = list(FarmScale = FarmScaleMetadata, 
+                  CatchmentScale = CatchmentScaleMetadata, 
+                  WaterQualitySites = WaterQualitySiteMetaData)
+}
+
+MetaDataList <- MetadataCreator()
+
+write.table(MetaDataList[["FarmScale"]],file=file.path(ProjectDataDirectory,"FarmScaleMetadata.csv"),sep=",",row.names = FALSE,quote = FALSE)
+write.table(MetaDataList[["CatchmentScale"]],file=file.path(ProjectDataDirectory,"CatchmentScaleMetadata.csv"),sep=",",row.names = FALSE,quote = FALSE)
+write.table(MetaDataList[["WaterQualitySites"]],file=file.path(ProjectDataDirectory,"WaterQualitySiteMetaData.csv"),sep=",",row.names = FALSE,quote = FALSE)
+
+```
