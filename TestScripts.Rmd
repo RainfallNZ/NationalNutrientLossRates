@@ -123,6 +123,10 @@ LCDBV5GeoDatabase <- "D:\\Projects\\data\\LCDBV5\\lcdb-v50-land-cover-database-v
 #This takes ~1 minute to load and gives a warning that can be ignored
 LCDBV5 <- sf::st_read(LCDBV5GeoDatabase)
 
+#Remove the "Not land" polygons. These are areas that were land in previous versions og the LCDBV5 but no longer are
+#They are usually coastal areas that have eroded. There are 14 of these polygons.
+LCDBV5 <- LCDBV5[!LCDBV5$Name_2018 == "Not land",]
+
 #The Dairy areas
 MonaghanGeoDatabase <- "D:\\Projects\\data\\OLWNutrientExportSpatialFiles\\Export_MfE.gdb"
 
@@ -151,7 +155,7 @@ LandUsePlusDairy$SrinivasanLandUse[!is.na(LandUsePlusDairy$Dairy)] <- "Dairy"
 
 plot(LandUsePlusDairy[,"SrinivasanLandUse"],border=NA, key.width = lcm(4.5))
 
-#Rename te columns prior to saving, otherwise the ESRI driver will shorten them to 8 letters using its own system
+#Rename the columns prior to saving, otherwise the ESRI driver will shorten them to 8 letters using its own system
 LandUsePlusDairy <- LandUsePlusDairy %>% rename(LandUse = SrinivasanLandUse)
 
 LandUsePlusDairy %>% st_write(file.path(GISDirectory,"SrinivasanTypes.gpkg"),layer = "LandUse", delete_layer = TRUE)
@@ -160,7 +164,7 @@ End_Time = Sys.time()
 End_Time - Start_time
 
 #Clear out some more space
-remove("MonaghanDairy","LCDBV5","LandUse","LandUsePlusDairy")
+remove("MonaghanDairy","LCDBV5","LandUsePlusDairy")
 
 ```
 
@@ -279,7 +283,10 @@ CatchmentScaleMetadata   <- data.frame(NULL)
 WaterQualitySiteMetadata <- data.frame(NULL)
 #work through each catchment using a for loop as the apply doesn't work well with sf objects
 #For all Catchments this takes 3 Hours!!
-for (WaterQualitySite in Catchments$sID[25] ){
+#Test catchments requested by Caroline are Tukituki,Ruamahanga and Hurunui, which have sID's of
+#HBRC-00043_NIWA, GW-00033 and NRWQN-00059_NIWA respectively which are indices 140,156 and 300
+
+for (WaterQualitySite in Catchments$sID[c(140,156,300)] ){
   print(WaterQualitySite)
   print(paste(which(WaterQualitySite==Catchments$sID),"of",nrow(Catchments)))
   Catchment <- Catchments[Catchments$sID == WaterQualitySite,]
