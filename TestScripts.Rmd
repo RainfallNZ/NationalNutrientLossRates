@@ -273,7 +273,7 @@ NutrientLookupTable <- read.csv(LeachRateLUTFile)
 
 
 ```{r}
-Start_Time = Sys.time()
+Start_Time = Sys.time() #takes 5 minutes to do Caroines test catchments
 
 #Initialise an empty output dataframe
 if (exists("NutrientOutputData")) rm(NutrientOutputData)
@@ -348,7 +348,7 @@ for (WaterQualitySite in Catchments$sID[CarolineIndices] ){
   #Build a stack of single-Type rasters
   TypeStack <- lapply((0:(length(Types)-1)),function(x) {TypeGrid %in% x}) %>% rast()
   names(TypeStack) <- Types
-  #Aggregate each layer to the FarmScale unit (i.e. 6.25 hectaes, which is 10 x the high resolution scale)
+  #Aggregate each layer to the FarmScale unit (i.e. 625 hectares, which is 100 x the high resolution x and y scales)
   AggregateStack <-lapply(TypeStack,function(SingleType){
     aggregate(SingleType,fact=100,fun='sum')
   }) %>% rast()
@@ -373,7 +373,7 @@ for (WaterQualitySite in Catchments$sID[CarolineIndices] ){
   CatchmentLong$LandUse<- strsplit(CatchmentLong$Type,"[-]")[[1]][1]
   
   #Calculate area
-  CatchmentLong$Hectares <- CatchmentLong$Cells * 6.25
+  CatchmentLong$Hectares <- CatchmentLong$Cells * 0.0625
   
   #Devise UniqueFarmScaleID
   CatchmentLong$FSID <- paste0("FS",sprintf("%02g",CatchmentLong$FSCol),
