@@ -32,7 +32,7 @@ CAtchment scales grid are 10 km x 10 km squares with the bottom left hand corner
 NZTM coordinate Easting=1000000 Northing=4700000
 Topright at Easting=2100000, Northing=6200000
 
-FarmScale are 250 m x 250 m scale grid aligned to the CatchmentScale Grid
+FarmScale are 2.50 km x 2.50 km scale grid aligned to the CatchmentScale Grid
 We need a grid with FarmScale rows within each CatchmentScaleCell, one with columns within each catchmentScaleCell, and one with CatchmentScale row number, and one with CatchmentScaleColumn Number
 ```{r}
 ExtentCoordinates <- data.frame("Easting"=c(1000000,2100000),"Northing"=c(4700000,6200000))
@@ -58,20 +58,20 @@ CatchmentScalePolygonGrid$CSID <- paste0("CS",apply(NumericIDs,1,paste,collapse=
 
 CatchmentScalePolygonGrid %>% st_write(file.path(GISDirectory,"SrinivasanTypes.gpkg"),layer = "CatchmentScaleGrid", delete_layer = TRUE)
 
-FarmScaleResolution <- 250
+FarmScaleResolution <- 2500
 FarmScaleGrid <- rast(vect(ExtentPolygon),resolution = FarmScaleResolution,vals=1)
 
-#I want to number cells from 1 to 40 in rows (bottom to top) and columns (left to right) within each CatchmentScale grid
-RowIDs <- 41 - (rowFromCell(FarmScaleGrid,cells(FarmScaleGrid)) %% 40)
-RowIDs[RowIDs==41] <- 1
+#I want to number cells from 1 to 4 in rows (bottom to top) and columns (left to right) within each CatchmentScale grid
+RowIDs <- 5 - (rowFromCell(FarmScaleGrid,cells(FarmScaleGrid)) %% 4)
+RowIDs[RowIDs==5] <- 1
 FarmScaleGridRow <- rast(FarmScaleGrid,vals=RowIDs)
 
-ColumnIDs <- colFromCell(FarmScaleGrid,cells(FarmScaleGrid)) %% 40
-ColumnIDs[ColumnIDs == 0] <- 40
+ColumnIDs <- colFromCell(FarmScaleGrid,cells(FarmScaleGrid)) %% 4
+ColumnIDs[ColumnIDs == 0] <- 4
 FarmScaleGridColumn <- rast(FarmScaleGrid,vals=ColumnIDs)
 
-FarmScaleCSRow <- disagg(CatchmentScaleGridRow,fact=40,method="near")
-FarmScaleCSColumn <- disagg(CatchmentScaleGridColumn,fact=40,method="near")
+FarmScaleCSRow <- disagg(CatchmentScaleGridRow,fact=4,method="near")
+FarmScaleCSColumn <- disagg(CatchmentScaleGridColumn,fact=4,method="near")
 
 FarmScaleStack <- rast(list("FSRow"=FarmScaleGridRow,"FSCol"=FarmScaleGridColumn,"CSRow"=FarmScaleCSRow,"CSCol"=FarmScaleCSColumn))
 ```
@@ -284,9 +284,12 @@ WaterQualitySiteMetadata <- data.frame(NULL)
 #work through each catchment using a for loop as the apply doesn't work well with sf objects
 #For all Catchments this takes 3 Hours!!
 #Test catchments requested by Caroline are Tukituki,Ruamahanga and Hurunui, which have sID's of
-#HBRC-00043_NIWA, GW-00033 and NRWQN-00059_NIWA respectively which are indices 140,156 and 300
+#HBRC-00043_NIWA, GW-00033 and NRWQN-00059_NIWA,
+#NRC-00045, EW-00040, ORC-00081, HRC-00032, ECAN-00116 respectively which are indices 140,156 and 300
+CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
+CarolineIndices <- which(Catchments$sID %in% CarolinesTestCatchments)
 
-for (WaterQualitySite in Catchments$sID[c(140,156,300)] ){
+for (WaterQualitySite in Catchments$sID[CarolineIndices] ){
   print(WaterQualitySite)
   print(paste(which(WaterQualitySite==Catchments$sID),"of",nrow(Catchments)))
   Catchment <- Catchments[Catchments$sID == WaterQualitySite,]
@@ -347,7 +350,7 @@ for (WaterQualitySite in Catchments$sID[c(140,156,300)] ){
   names(TypeStack) <- Types
   #Aggregate each layer to the FarmScale unit (i.e. 6.25 hectaes, which is 10 x the high resolution scale)
   AggregateStack <-lapply(TypeStack,function(SingleType){
-    aggregate(SingleType,fact=10,fun='sum')
+    aggregate(SingleType,fact=100,fun='sum')
   }) %>% rast()
   
   CatchmentGrid <- values(AggregateStack, dataframe=TRUE)
@@ -370,7 +373,7 @@ for (WaterQualitySite in Catchments$sID[c(140,156,300)] ){
   CatchmentLong$LandUse<- strsplit(CatchmentLong$Type,"[-]")[[1]][1]
   
   #Calculate area
-  CatchmentLong$Hectares <- CatchmentLong$Cells * 0.0625
+  CatchmentLong$Hectares <- CatchmentLong$Cells * 6.25
   
   #Devise UniqueFarmScaleID
   CatchmentLong$FSID <- paste0("FS",sprintf("%02g",CatchmentLong$FSCol),
