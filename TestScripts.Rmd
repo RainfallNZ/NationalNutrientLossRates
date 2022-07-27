@@ -273,7 +273,7 @@ NutrientLookupTable <- read.csv(LeachRateLUTFile)
 
 
 ```{r}
-Start_Time = Sys.time() #takes 5 minutes to do Caroines test catchments
+Start_Time = Sys.time() #takes 5 minutes to do Carolines test catchments
 
 #Initialise an empty output dataframe
 if (exists("NutrientOutputData")) rm(NutrientOutputData)
@@ -366,11 +366,9 @@ for (WaterQualitySite in Catchments$sID[CarolineIndices] ){
   
   #Add TN and TP loss rates from lookup table
   CatchmentLong <- merge(CatchmentLong,NutrientLookupTable[,c("Type","TN.Loss.Rate","TP.Loss.Rate")],by.x = c("Type"),by.y = c("Type"))
-  
-  #Parse out the land use, moisture class and slope
-  CatchmentLong$Srinivasan.slope.type <- strsplit(CatchmentLong$Type,"[-]")[[1]][2]
-  CatchmentLong$Srinivasan.Moisture.Type<- strsplit(CatchmentLong$Type,"[-]")[[1]][3]
-  CatchmentLong$LandUse<- strsplit(CatchmentLong$Type,"[-]")[[1]][1]
+
+  #Parse out the land use, moisture class and slope. Use of strsplit is awkward, this solution is from https://stackoverflow.com/questions/8996134/extract-vectors-from-strsplit-list-without-using-a-loop
+  CatchmentLong[,c("LandUse","Srinivasan.slope.type","Srinivasan.Moisture.Type")]<- plyr::ldply(strsplit(CatchmentLong$Type,"[-]"))
   
   #Calculate area
   CatchmentLong$Hectares <- CatchmentLong$Cells * 0.0625
