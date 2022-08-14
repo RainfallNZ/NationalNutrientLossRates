@@ -289,7 +289,8 @@ WaterQualitySiteMetadata <- data.frame(NULL)
 CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
 CarolineIndices <- which(Catchments$sID %in% CarolinesTestCatchments)
 
-for (WaterQualitySite in Catchments$sID[CarolineIndices] ){
+#for (WaterQualitySite in Catchments$sID[CarolineIndices] ){
+for (WaterQualitySite in Catchments$sID){
   print(WaterQualitySite)
   print(paste(which(WaterQualitySite==Catchments$sID),"of",nrow(Catchments)))
   Catchment <- Catchments[Catchments$sID == WaterQualitySite,]
@@ -421,7 +422,7 @@ for (WaterQualitySite in Catchments$sID[CarolineIndices] ){
 End_Time = Sys.time()
 End_Time - Start_Time
 
-write.table(NutrientOutputData,file=file.path(ProjectDataDirectory,"OutputV2.csv"),sep=",",row.names = FALSE,append=TRUE,quote = FALSE)
+write.table(NutrientOutputData,file=file.path(ProjectDataDirectory,"OutputV3.csv"),sep=",",row.names = FALSE,append=TRUE,quote = FALSE)
 ```
 
 
