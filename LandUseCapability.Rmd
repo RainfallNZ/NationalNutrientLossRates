@@ -34,7 +34,7 @@ LandUseCapability <- vect(file.path(GISDirectory,"nzlri-land-use-capability-2021
 
 
 ```{r}
-Start_Time = Sys.time() #takes 11 s to do Caroline's test catchments
+Start_Time = Sys.time() #takes 11 s to do Caroline's test catchments, 8.5 minutes to do all catchments
 LUCOutputData <- data.frame("sID"=as.character(NULL),"LUC"=as.numeric(NULL),"area.pct"=as.numeric(NULL))
 
 CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")

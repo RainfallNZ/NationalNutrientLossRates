@@ -1,0 +1,81 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Load libraries and external functions and set directories and filenames
+
+```{r}
+if (!require(sf)) install.packages("sf"); library(sf)
+if (!require(plyr)) install.packages("plyr"); library(plyr)
+if (!require(dplyr)) install.packages("dplyr"); library(dplyr)
+if (!require(pbapply)) install.packages("pbapply"); library(pbapply)
+if (!require(terra)) install.packages("terra"); library(terra)
+if (!require(tidyr)) install.packages("tidyr"); library(tidyr)
+
+source("ProcessingFunctions.R")
+
+ProjectDirectory <- "D:\\Projects\\LWP\\OLW_AttenuationUncertainty"
+ProjectDataDirectory <- file.path(ProjectDirectory,"Data")
+GISDirectory <- file.path(ProjectDataDirectory,"GIS")
+```
+
+The sediment data are provided in NZMG projection.
+
+```{r}
+#Load the catchment spatial data
+Catchments <- st_read(dsn = file.path(GISDirectory,"Catchments","Catchments.shp"))
+Catchments <- vect(file.path(GISDirectory,"Catchments","Catchments.shp"))
+CatchmentsNZMG <- project(Catchments,y="EPSG:27200")
+
+#Load the sediment yield data for the North and South islands
+SI_SedimentYield <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","Si_sedye.zip")))
+NI_SedimentYield <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","Ni_sedye.zip")))
+crs(SI_SedimentYield)<- "EPSG:27200"
+crs(NI_SedimentYield)<- "EPSG:27200"
+bob <- merge(SI_SedimentYield,NI_SedimentYield)
+
+#Load the lake mask data
+SI_LakeMask <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","silakecat.zip")))
+NI_LakeMask <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","nilakecat.zip")))
+crs(SI_LakeMask)<- "EPSG:27200"
+crs(NI_LakeMask)<- "EPSG:27200"
+
+
+```
+
+
+```{r}
+Start_Time = Sys.time() #takes 5 minutes to do Carolines test catchments
+CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
+CarolineIndices <- which(CatchmentsNZMG$sID %in% CarolinesTestCatchments)
+TestCatchments <- CatchmentsNZMG[,CarolineIndices]
+
+#Find all the South Island catchments based on the RECV2 number
+SICatchments <- which(CatchmentsNZMG$nzsegment %/% 1000000 >= 10 & CatchmentsNZMG$sID %in% CarolinesTestCatchments)
+NICatchments <- which(CatchmentsNZMG$nzsegment %/% 1000000 < 10 & CatchmentsNZMG$sID %in% CarolinesTestCatchments)
+CatchmentsNZMG$SedYield <- as.numeric(NA)
+CatchmentsNZMG$SedYield[SICatchments] <- terra::extract(SI_SedimentYield,CatchmentsNZMG[SICatchments],sum)[,2]
+CatchmentsNZMG$SedYield[NICatchments] <- terra::extract(SI_SedimentYield,CatchmentsNZMG[NICatchments],sum)[,2]
+
+#Correct the units to account for the resolution of the sediment data (100 m)
+CatchmentsNZMG$SedYield <- CatchmentsNZMG$SedYield / 100 #Should now be in Tons/Year
+
+#Need to correct for lakes.
+#Three cases:
+#1/ no lakes in catchment, no change in sediment yield
+#2/ lake-catchments are upstream of outlet, remove sediment yield from the lake-catchment contribution
+#3/ Outlet is within a lake-catchment, but is upstream of another lake. Only remove sediment for area upstream of upstream lake.
+#The lake data provided by NIWA is only useful for sea-draining catchments.
+#I need to create up-stream areas for all lakes. For each WQ catchment I need to find what lakes are within it, then union their catchment areas, and remove that from the sediment-yield summation.
+#So 
+#1/ Use the TopoLakes1:500k data
+#2/ Figure out what sized lakes we are interested in. 100 Ha looks about right, but manual removal of Waikato and possibly Waitaki River lakes, maybe Lake Opuha too?
+#Get their outlet reach number. This requires manual check. There are about 154 of them!
+#Create lake catchments for all of them.
+#Use the Catchment_creator_function
+
+
+```
+
+

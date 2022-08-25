@@ -28,7 +28,7 @@ CatchmentCreator <- function(Watersheds=RECV2Watersheds,ReachNetwork=RECV2ReachN
     upstream_indices<-which(ReachNetwork$TO_NODE %in% ReachNetwork$FROM_NODE[upstream_indices])
     #downstream_index<-next_downstream_index
   } #end of while
-
+  
   #Extract the watersheds of interest
   CatchmentWaterSheds <- Watersheds[Watersheds$nzsegment %in% CatchmentReaches,]
   #browser()
@@ -57,44 +57,23 @@ CatchmentCreator <- function(Watersheds=RECV2Watersheds,ReachNetwork=RECV2ReachN
 #'@author Torsten Berg
 #'@return A simple feature (sf) object
 #'@export
-  GISunion <- function(a,b) {
-    #Check that the same feature types are being unioned
-    #Multipolygons won't union with polygons in this function
-    stopifnot(st_geometry_type(a) == st_geometry_type(b))
-    
-    #Make sure the geometry name attribute is the same for both objects otherwise the
-    #rbind.fill function used later on won't bind the geometries togehter
-    GeometryNameOf_a <- attr(a, "sf_column")
-    if (attr(b, "sf_column") != GeometryNameOf_a) st_geometry(b) =GeometryNameOf_a
-    
-    st_agr(a) = "constant"
-    st_agr(b) = "constant"
-    op1 <- st_difference(a,st_union(b))
-    op2 <- st_difference(b, st_union(a))
-    op3 <- st_intersection(b, a)
-    union <- rbind.fill(op1, op2, op3)
-    return(st_as_sf(union))
-  }
+GISunion <- function(a,b) {
+  #Check that the same feature types are being unioned
+  #Multipolygons won't union with polygons in this function
+  stopifnot(st_geometry_type(a) == st_geometry_type(b))
+  
+  #Make sure the geometry name attribute is the same for both objects otherwise the
+  #rbind.fill function used later on won't bind the geometries togehter
+  GeometryNameOf_a <- attr(a, "sf_column")
+  if (attr(b, "sf_column") != GeometryNameOf_a) st_geometry(b) =GeometryNameOf_a
+  
+  st_agr(a) = "constant"
+  st_agr(b) = "constant"
+  op1 <- st_difference(a,st_union(b))
+  op2 <- st_difference(b, st_union(a))
+  op3 <- st_intersection(b, a)
+  union <- rbind.fill(op1, op2, op3)
+  return(st_as_sf(union))
+}
 
   
-  #' A function to aggregate REC watersheds based on stream order
-  #'
-  #'RECV2WaterShedAggregate() merges watersheds of river reaches of a strahler order 
-  #'less than Order into their downstream watershed
-  #'@param Watersheds A simple feature polygon object of RECV2 watersheds with nzsegment attribute
-  #'@parma RiverLines A simple feature lilne object of RECV2 river lines with nzsegment 
-  #'StreamOrde, FROM_NODE and TO_NODE attributes
-  #'@author Tim Kerr
-  #'@return A simple feature (sf) object with the nzsegment attribute matching the lowest RECV2 reach
-  #'@export
-  #'
-  
-  #During testing load an example watershed and riverlines file
-  ExampleWatersheds <- st_read
-  #ExampleRiverLines <- 
-  
-  RECV2WaterShedAggregate <- function(WaterSheds=NA,RiverLines=NA,Order= 2) {
-   #Start from the bottom of the river network
-    OutletReaches <- RiverLines %>% filter(TO_NODE == FROM_NODE | !To_NODE %in% FROM_NODE)
-
-  }

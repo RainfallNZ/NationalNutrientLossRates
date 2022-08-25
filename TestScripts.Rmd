@@ -426,6 +426,12 @@ End_Time - Start_Time
 write.table(NutrientOutputData,file=file.path(ProjectDataDirectory,"OutputV3.csv"),sep=",",row.names = FALSE,append=TRUE,quote = FALSE)
 ```
 
+If there is a need to re-create the metadata, but you don't want to recreate the nutrient data, then load the nutrient data file
+```{r}
+NutrientOutputData <- read.csv(file=file.path(ProjectDataDirectory,"AllSitesLossRatesV3.csv"))
+```
+
+
 
 ```{r}
 #Create a function that builds a metadata file of unique FarmScale units, CatchmentScale Units and Water Quality Site Catchments.
@@ -449,8 +455,8 @@ MetadataCreator <- function(OutputData = NutrientOutputData, WaterQualitySiteDat
 
 MetaDataList <- MetadataCreator()
 
-write.table(MetaDataList[["FarmScale"]],file=file.path(ProjectDataDirectory,"FarmScaleMetadata.csv"),sep=",",row.names = FALSE,quote = FALSE)
-write.table(MetaDataList[["CatchmentScale"]],file=file.path(ProjectDataDirectory,"CatchmentScaleMetadata.csv"),sep=",",row.names = FALSE,quote = FALSE)
-write.table(MetaDataList[["WaterQualitySites"]],file=file.path(ProjectDataDirectory,"WaterQualitySiteMetaData.csv"),sep=",",row.names = FALSE,quote = FALSE)
+write.table(MetaDataList[["FarmScale"]],file=file.path(ProjectDataDirectory,"FarmScaleMetadataV2.csv"),sep=",",row.names = FALSE,quote = FALSE)
+write.table(MetaDataList[["CatchmentScale"]],file=file.path(ProjectDataDirectory,"CatchmentScaleMetadataV2.csv"),sep=",",row.names = FALSE,quote = FALSE)
+write.table(MetaDataList[["WaterQualitySites"]],file=file.path(ProjectDataDirectory,"WaterQualitySiteMetaDataV2.csv"),sep=",",row.names = FALSE,quote = FALSE)
 
 ```
