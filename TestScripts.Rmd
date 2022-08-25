@@ -199,7 +199,8 @@ remove("LRISlope","Slope")
 
 Now do  moisture
 ```{r,eval = FALSE}
-#Takes 45 seconds
+#Takes 5 hours for all catchments
+#Takes 45 seconds for Carolines Catchments
 Start_time = Sys.time()
 
 #The MfE Irrigated area geodatabase. version downloaded from MfE Data portal 
