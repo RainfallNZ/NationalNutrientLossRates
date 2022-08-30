@@ -18,63 +18,122 @@ source("ProcessingFunctions.R")
 ProjectDirectory <- "D:\\Projects\\LWP\\OLW_AttenuationUncertainty"
 ProjectDataDirectory <- file.path(ProjectDirectory,"Data")
 GISDirectory <- file.path(ProjectDataDirectory,"GIS")
+
+LakeFileName <- file.path(GISDirectory,"Lakes","LakesWithinCatchments.shp")
+LakeCatchmentsFileName <- file.path(GISDirectory,"LakeCatchments")
 ```
 
 The sediment data are provided in NZMG projection.
 
 ```{r}
 #Load the catchment spatial data
-Catchments <- st_read(dsn = file.path(GISDirectory,"Catchments","Catchments.shp"))
 Catchments <- vect(file.path(GISDirectory,"Catchments","Catchments.shp"))
-CatchmentsNZMG <- project(Catchments,y="EPSG:27200")
+
+#Load the test catchments supplied by NIWA (and edited and reprojected to NZTM by Tim) for checking sediment yield calculations
+TestCatchment1 <- vect(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","sediment_2002","bowensNZTM.shp"))
+TestCatchment2 <- vect(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","sediment_2002","chardsNZTM.shp"))
+
 
 #Load the sediment yield data for the North and South islands
 SI_SedimentYield <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","Si_sedye.zip")))
 NI_SedimentYield <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","Ni_sedye.zip")))
 crs(SI_SedimentYield)<- "EPSG:27200"
 crs(NI_SedimentYield)<- "EPSG:27200"
-bob <- merge(SI_SedimentYield,NI_SedimentYield)
 
-#Load the lake mask data
-SI_LakeMask <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","silakecat.zip")))
-NI_LakeMask <- rast(unzip(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","nilakecat.zip")))
-crs(SI_LakeMask)<- "EPSG:27200"
-crs(NI_LakeMask)<- "EPSG:27200"
+#Load the lake polygon data
+LakePolygons <- vect(LakeFileName)
 
+#Load the lake catchment data, if it exists
+if(file.exists(LakeCatchmentFileName)){
+  LakeCatchments <- vect(LakeCatchmentsFileName)
+} else {
+  print("LakeCatchmnetsFileName is wrong, or it doesn't exist and needs to be created 
+  using the LakeCatchmentFileCreation chunk")
+}
 
 ```
 
+Build lake catchment data
+```{r, LakeCatchmentFileCreation, eval = FALSE}
+Locations <- LakePolygons$RECV2Out
 
+#Load the watershed and river network data. Note that these are large.
+#The RECV2 geodatabase. version  from Ton with correct attribute names.
+REC2V2GeoDatabase <- "D:\\Projects\\data\\RECV2.5\\nzRec2_v5.gdb" #This is the NIWA version
+
+RiverNetwork <- sf::st_read(REC2V2GeoDatabase, layer = "riverlines")
+Watersheds <- sf::st_read(REC2V2GeoDatabase, layer = "rec2ws")
+
+LakeCatchmentsList <- pblapply(Locations, function(Location) {
+  Catchment <- CatchmentCreator(Watersheds = Watersheds, ReachNetwork = RiverNetwork, OutletReach = Location)
+  return(Catchment)
+})
+LakeCatchments <- do.call(rbind,LakeCatchmentsList)
+LakeCatchments$ID <- names(LakeCatchmentsList)
+LakeCatchments <- vect(LakeCatchments)
+#Suspect a bug in the terra::writeVector function
+#Check for output file, delete it if it exists
+if (dir.exists(LakeCatchmentFileName)) unlink(LakeCatchmentFileName,recursive=TRUE)
+writeVector(x=LakeCatchments, filename=LakeCatchmentFileName,filetype = "ESRI Shapefile",overwrite=TRUE)
+
+```
+
+Work through each catchment, find which lakes are within them, get the catchments for those lakes and use their combined area to mask out what area is not to be used to aggregate the sediment yield gridded data
 ```{r}
-Start_Time = Sys.time() #takes 5 minutes to do Carolines test catchments
-CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
-CarolineIndices <- which(CatchmentsNZMG$sID %in% CarolinesTestCatchments)
-TestCatchments <- CatchmentsNZMG[,CarolineIndices]
+Start_Time = Sys.time() #takes 43 s to do Carolines test catchments
+#15 minutes for all catchments
 
+CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
+
+#Find the lakes that are within each water quality measuring site catchment
+#This returns a boolean matrix of catchments (rows) by lakes (columns)
+LakesOfInterest <- relate(Catchments,LakePolygons,relation="contains")
+
+#Work through each catchment, and erase the part that is in a lake catchment
+LakeCorrectedCatchmentList <- lapply(seq(1,nrow(Catchments)), function(CatchmentIndex){
+  #browser()
+  WQCatchment_withoutLakeCatchments <- erase(Catchments[CatchmentIndex],LakeCatchments[LakesOfInterest[CatchmentIndex,]])
+})
+
+#two WQ sites are lake outlets!! So there is nothing left after erasing lake catchments.
+CatchmentsWithNoPYield <- which(Catchments$nzsegment %in% LakePolygons$RECV2Out)
+
+LakeCorrectedCatchments <- do.call(rbind,LakeCorrectedCatchmentList)
+
+#Reproject to NZMG to enable use with the Sediment yield data
+LakeCorrectedCatchmentsNZMG <- project(LakeCorrectedCatchments,y="EPSG:27200")
+
+#Initialise a sediment yield attribute
+LakeCorrectedCatchmentsNZMG$SedYield <- as.numeric(NA)
+
+
+#Process the South Island and North Island separately 
 #Find all the South Island catchments based on the RECV2 number
-SICatchments <- which(CatchmentsNZMG$nzsegment %/% 1000000 >= 10 & CatchmentsNZMG$sID %in% CarolinesTestCatchments)
-NICatchments <- which(CatchmentsNZMG$nzsegment %/% 1000000 < 10 & CatchmentsNZMG$sID %in% CarolinesTestCatchments)
-CatchmentsNZMG$SedYield <- as.numeric(NA)
-CatchmentsNZMG$SedYield[SICatchments] <- terra::extract(SI_SedimentYield,CatchmentsNZMG[SICatchments],sum)[,2]
-CatchmentsNZMG$SedYield[NICatchments] <- terra::extract(SI_SedimentYield,CatchmentsNZMG[NICatchments],sum)[,2]
+SICatchments <- which(LakeCorrectedCatchmentsNZMG$nzsegment %/% 1000000 >= 10 )#& LakeCorrectedCatchmentsNZMG$sID %in% CarolinesTestCatchments)
+#Find the North Island catchments
+NICatchments <- which(LakeCorrectedCatchmentsNZMG$nzsegment %/% 1000000 < 10 )# & LakeCorrectedCatchmentsNZMG$sID %in% CarolinesTestCatchments)
+
+LakeCorrectedCatchmentsNZMG$SedYield[SICatchments] <- terra::extract(SI_SedimentYield,LakeCorrectedCatchmentsNZMG[SICatchments],sum, na.rm=TRUE)[,2]
+LakeCorrectedCatchmentsNZMG$SedYield[NICatchments] <- terra::extract(NI_SedimentYield,LakeCorrectedCatchmentsNZMG[NICatchments],sum, na.rm=TRUE)[,2]
 
 #Correct the units to account for the resolution of the sediment data (100 m)
-CatchmentsNZMG$SedYield <- CatchmentsNZMG$SedYield / 100 #Should now be in Tons/Year
+LakeCorrectedCatchmentsNZMG$SedYield <- LakeCorrectedCatchmentsNZMG$SedYield / 100 #Should now be in Tons/Year
 
-#Need to correct for lakes.
-#Three cases:
-#1/ no lakes in catchment, no change in sediment yield
-#2/ lake-catchments are upstream of outlet, remove sediment yield from the lake-catchment contribution
-#3/ Outlet is within a lake-catchment, but is upstream of another lake. Only remove sediment for area upstream of upstream lake.
-#The lake data provided by NIWA is only useful for sea-draining catchments.
-#I need to create up-stream areas for all lakes. For each WQ catchment I need to find what lakes are within it, then union their catchment areas, and remove that from the sediment-yield summation.
-#So 
-#1/ Use the TopoLakes1:500k data
-#2/ Figure out what sized lakes we are interested in. 100 Ha looks about right, but manual removal of Waikato and possibly Waitaki River lakes, maybe Lake Opuha too?
-#Get their outlet reach number. This requires manual check. There are about 154 of them!
-#Create lake catchments for all of them.
-#Use the Catchment_creator_function
+#Convert to a data frame, ready for exporting
+CatchmentSedYield <- as.data.frame(LakeCorrectedCatchmentsNZMG)
 
+#Add in the two lake-outlet catchments
+MissingSites <- cbind(as.data.frame(Catchments)[CatchmentsWithNoPYield,],data.frame("SedYield" = c(0,0)))
+CatchmentSedYield <- rbind.fill(CatchmentSedYield,MissingSites)
+
+#Round the sediment yield to the nearest decimal place
+CatchmentSedYield$SedYield <- round(CatchmentSedYield$SedYield,1)
+
+write.table(CatchmentSedYield,
+            file=file.path(ProjectDataDirectory,"SedimentYieldV0.csv"),sep=",",row.names = FALSE,append=FALSE,quote = FALSE)
+
+End_time <- Sys.time()
+End_time - Start_Time
 
 ```
 
