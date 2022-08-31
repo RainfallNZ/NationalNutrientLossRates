@@ -37,7 +37,7 @@ LandUse <- st_read(file.path(GISDirectory,"SrinivasanTypes.gpkg"),layer = "LandU
 
 
 ```{r}
-Start_Time = Sys.time() #takes 3.5 minutes to do Caroline's test catchments, 8.5 minutes to do all catchments
+Start_Time = Sys.time() #takes 3.5 minutes to do Caroline's test catchments, 3 hours to do all catchments
 LUCOutputData <- data.frame("sID"=as.character(NULL),"LUC"=as.numeric(NULL),"area.ha"=as.numeric(NULL))
 
 CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
@@ -88,7 +88,30 @@ End_Time = Sys.time()
 End_Time - Start_Time
 
 #write to a csv file
-write.table(LUCOutputData,file=file.path(ProjectDataDirectory,"LUCDataV1.csv"),sep=",",row.names = FALSE,append=FALSE,quote = FALSE)
+write.table(LUCOutputData,file=file.path(ProjectDataDirectory,"LUCDataV2.csv"),sep=",",row.names = FALSE,append=FALSE,quote = FALSE)
 ```
 
+Check the totals match
+```{r}
+#Compare to the catchment total area
+CatchmentAreaTotals <- LUCOutputData %>% group_by(sID) %>% summarise(sum=sum(area.ha))
+Catchments$area.ha <- st_area(Catchments) %>% units::set_units(NULL) / 10000
+CompareAreas <- base::merge(CatchmentAreaTotals,st_drop_geometry(Catchments),by=c("sID"),all=TRUE)
+
+CompareAreas$PctDiff <- round((CompareAreas$sum - CompareAreas$area.ha)/CompareAreas$area.ha * 100,2)
+DifferenceRange <- range(CompareAreas$PctDiff)
+print(paste("The difference in catchment areas after summing the LUC-LandUse areas ranges from",DifferenceRange[1],"% to",DifferenceRange[2],"%"))
+
+#Compare to the previously-prepared LUC-areas
+LUCAreaTotals <- LUCOutputData %>% group_by(sID,LUC) %>% summarise(sum=sum(area.ha))
+LUCAreaTotals <- merge(LUCAreaTotals,CompareAreas,by="sID",all.x=TRUE) %>% select(!c(sum.y:nzsegment,PctDiff))
+LUCAreaTotals$pctArea <- round(LUCAreaTotals$sum.x / LUCAreaTotals$area.ha * 100,0)
+
+LUCAreaData <- read.csv(file.path(ProjectDataDirectory,"LUCDataV0.csv"))
+
+CompareAreasByLUC <- base::merge(LUCAreaTotals,LUCAreaData,by=c("sID","LUC"),all=TRUE)
+CompareAreasByLUC$Diff <- CompareAreasByLUC$pctArea - CompareAreasByLUC$area.pct
+DifferenceRange <- range(CompareAreasByLUC$Diff)
+print(paste("The difference in catchment areas after summing the LUC-LandUse areas and the LUC areas ranges from",DifferenceRange[1],"% to",DifferenceRange[2],"%"))
+```
 
