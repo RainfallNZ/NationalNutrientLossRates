@@ -29,9 +29,7 @@ The sediment data are provided in NZMG projection.
 #Load the catchment spatial data
 Catchments <- vect(file.path(GISDirectory,"Catchments","Catchments.shp"))
 
-#Load the test catchments supplied by NIWA (and edited and reprojected to NZTM by Tim) for checking sediment yield calculations
-TestCatchment1 <- vect(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","sediment_2002","bowensNZTM.shp"))
-TestCatchment2 <- vect(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","sediment_2002","chardsNZTM.shp"))
+
 
 
 #Load the sediment yield data for the North and South islands
@@ -53,37 +51,49 @@ if(file.exists(LakeCatchmentFileName)){
 
 ```
 
-Build lake catchment data
+Function to build lake catchment polygon shape file
 ```{r, LakeCatchmentFileCreation, eval = FALSE}
-Locations <- LakePolygons$RECV2Out
 
-#Load the watershed and river network data. Note that these are large.
-#The RECV2 geodatabase. version  from Ton with correct attribute names.
-REC2V2GeoDatabase <- "D:\\Projects\\data\\RECV2.5\\nzRec2_v5.gdb" #This is the NIWA version
+#' A convenience function to find the catchment upstream of a vector of RECV2 nzsegment numbers
+#'
+#'LakeCatchmentCreator() creates a SpatVector object of polygon features of the catchments upstream of a vector of REC2.5 reach ID numbers (nzsegment, nzsgmnt or nzseg_v3 attribute) upstream of a reach.
+#'@param RECV2Watersheds A simple features (sf)  polygon representation of the REC V2 watersheds), TO_NODE and FROM_NODE (or FROM_NO) attributes.
+#'@parma Locations A vector of RECV2.5 nzsegment numbers. Defaults to Lake Pukaki and Lake Rotoaira outlet reaches.
+#'@param RECV2GeoDatabaseFile Filename of the ESRI geodatabase with the RECV2.5 riverlines and watersheds
+#'@param LakeCatchmentFileName File name to be used for the output ESRI Polygon shapefile of catchments
+#'@author Tim Kerr, \email{Tim.Kerr@@Rainfall.NZ}
+#'@return A SpatVector of catchment polygons
+#'@keywords REC River Environment Classification
 
-RiverNetwork <- sf::st_read(REC2V2GeoDatabase, layer = "riverlines")
-Watersheds <- sf::st_read(REC2V2GeoDatabase, layer = "rec2ws")
+LakeCatchmentCreator <- function(Locations = c(13165194,3166693),
+                                 RECV2GeoDatabaseFile = "nzRec2_v5.gdb",
+                                 LakeCatchmentFileName = LakeCatchmentFileName){
 
-LakeCatchmentsList <- pblapply(Locations, function(Location) {
-  Catchment <- CatchmentCreator(Watersheds = Watersheds, ReachNetwork = RiverNetwork, OutletReach = Location)
-  return(Catchment)
-})
-LakeCatchments <- do.call(rbind,LakeCatchmentsList)
-LakeCatchments$ID <- names(LakeCatchmentsList)
-LakeCatchments <- vect(LakeCatchments)
-#Suspect a bug in the terra::writeVector function
-#Check for output file, delete it if it exists
-if (dir.exists(LakeCatchmentFileName)) unlink(LakeCatchmentFileName,recursive=TRUE)
-writeVector(x=LakeCatchments, filename=LakeCatchmentFileName,filetype = "ESRI Shapefile",overwrite=TRUE)
+  RiverNetwork <- sf::st_read(REC2V2GeoDatabase, layer = "riverlines")
+  Watersheds <- sf::st_read(REC2V2GeoDatabase, layer = "rec2ws")
+  
+  LakeCatchmentsList <- pblapply(Locations, function(Location) {
+    Catchment <- CatchmentCreator(Watersheds = Watersheds, ReachNetwork = RiverNetwork, OutletReach = Location)
+    return(Catchment)
+  })
+  LakeCatchments <- do.call(rbind,LakeCatchmentsList)
+  LakeCatchments$nzsegment <- names(LakeCatchmentsList)
+  LakeCatchments <- vect(LakeCatchments)
+  #Suspect a bug in the terra::writeVector function
+  #Check for output file, delete it if it exists
+  if (dir.exists(LakeCatchmentFileName)) unlink(LakeCatchmentFileName,recursive=TRUE)
+  writeVector(x=LakeCatchments, filename=LakeCatchmentFileName,filetype = "ESRI Shapefile",overwrite=TRUE)
+  return(LakeCatchments)
+}
 
+#LakeCatchments <- LakeCatchmentCreator(Locations = LakePolygons$RECV2Out,
+                     RECV2GeoDatabaseFile = "D:\\Projects\\data\\RECV2.5\\nzRec2_v5.gdb",
+                     LakeCatchmentFileName = LakeCatchmentFileName)
 ```
 
 Work through each catchment, find which lakes are within them, get the catchments for those lakes and use their combined area to mask out what area is not to be used to aggregate the sediment yield gridded data
 ```{r}
-Start_Time = Sys.time() #takes 43 s to do Carolines test catchments
-#15 minutes for all catchments
-
-CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
+Start_Time = Sys.time() #30 minutes for all catchments
 
 #Find the lakes that are within each water quality measuring site catchment
 #This returns a boolean matrix of catchments (rows) by lakes (columns)
@@ -134,7 +144,42 @@ write.table(CatchmentSedYield,
 
 End_time <- Sys.time()
 End_time - Start_Time
+```
 
+Repeat the above for the test catchments and check that the results match what they should.
+For the test catchments, the lake correction does not need to be applied, as it is only considered for the second "Chard" exmple, and only for one sub-catchment, which is at the Lake Wakatipu outlet, so has a sediment yield of 0
+```{r, eval = FALSE}
+#Load the test catchments supplied by NIWA (and edited and reprojected to NZTM by Tim) for checking sediment yield calculations
+Bowens <- vect(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","sediment_2002","bowensNZTM.shp"))
+Chards<- vect(file.path(ProjectDataDirectory,"NIWA_SedimentYieldGrid","sediment_2002","chardsNZTM.shp"))
+
+TestYields <- c("Bowens"=1314600,"Chards"=1337000) #From the ReadMe.doc file that accompanied the sediment yield data. In Tons/year
+LakeSubCatchments <- "Frankton"
+
+invisible(lapply(seq_along(TestYields), function(TestIndex){
+  
+  TestCatchment <- names(TestYields[TestIndex])
+  
+  #Reproject to NZMG to enable use with the Sediment yield data
+  CatchmentsNZMG <- project(get(TestCatchment),y="EPSG:27200")
+  
+  #Initialise a sediment yield attribute
+  CatchmentsNZMG$SedYield <- as.numeric(NA)
+  
+  CatchmentsNZMG$SedYield <- terra::extract(SI_SedimentYield,CatchmentsNZMG,sum, na.rm=TRUE)[,2]
+  
+  #Remove the lake sub-catchments
+  CatchmentsNZMG <- CatchmentsNZMG[!CatchmentsNZMG$SITENAME %in% LakeSubCatchments,]
+  
+  #Total the yield for the non-lake subcatchments
+  TotalSedYield <- sum(CatchmentsNZMG$SedYield) / 100
+  
+  #Calculate the difference to the expected values, and report
+  DifferencePct <- round((TotalSedYield - TestYields[TestIndex])/TestYields[TestIndex] * 100,2)
+  
+  print(paste(TestCatchment,"result is within",DifferencePct, "% of the expected"))
+  return()
+}))
 ```
 
 
