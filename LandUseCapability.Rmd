@@ -25,17 +25,20 @@ It has been downloaded as in "geopackage" format.
 
 ```{r}
 #Load the catchment spatial data
-Catchments <- vect(file.path(GISDirectory,"Catchments","Catchments.shp"))
+Catchments <- st_read(file.path(GISDirectory,"Catchments","Catchments.shp"))
 
 #Load the Land Use Capability data
-LandUseCapability <- vect(file.path(GISDirectory,"nzlri-land-use-capability-2021.gpkg"))
+LandUseCapability <- st_read(file.path(GISDirectory,"nzlri-land-use-capability-2021.gpkg"))
+
+#Load the land use data
+LandUse <- st_read(file.path(GISDirectory,"SrinivasanTypes.gpkg"),layer = "LandUse")
 
 ```
 
 
 ```{r}
-Start_Time = Sys.time() #takes 11 s to do Caroline's test catchments, 8.5 minutes to do all catchments
-LUCOutputData <- data.frame("sID"=as.character(NULL),"LUC"=as.numeric(NULL),"area.pct"=as.numeric(NULL))
+Start_Time = Sys.time() #takes 3.5 minutes to do Caroline's test catchments, 8.5 minutes to do all catchments
+LUCOutputData <- data.frame("sID"=as.character(NULL),"LUC"=as.numeric(NULL),"area.ha"=as.numeric(NULL))
 
 CarolinesTestCatchments <- c("HBRC-00043_NIWA", "GW-00033","NRWQN-00059_NIWA","NRC-00045", "EW-00040", "ORC-00081", "HRC-00032", "ECAN-00116")
 CarolineIndices <- which(Catchments$sID %in% CarolinesTestCatchments)
@@ -45,33 +48,47 @@ for (WaterQualitySite in Catchments$sID){
   print(WaterQualitySite)
   print(paste(which(WaterQualitySite==Catchments$sID),"of",nrow(Catchments)))
   Catchment <- Catchments[Catchments$sID == WaterQualitySite,]
-  CatchmentArea <- expanse(Catchment)
+  CatchmentArea <- st_area(Catchment) %>% units::set_units(NULL) / 10000
+  
+  if (exists("CatchmentLandUse")) rm(CatchmentLandUse)
+  
+  #Note that the intersections raise a warning:
+  #"attribute variables are assumed to be spatially constant throughout all geometries"
+  #This can be suppressed (see https://github.com/r-spatial/sf/issues/406)
+  #By explicitly defining the attributes of the contributing geometries as constant
+  #Or by only intersecting the geometries, then -re-attaching the attributes
+  #I don't understand this and need to figure out what is meant.
+  #But I think I can do the explicit solution.
+  CatchmentLandUse <- st_intersection(Catchment,LandUse)
 
   #Intersect the Land Use Capability spatial data to just the catchment.
-  CatchmentLandUseCapability <- intersect(Catchment,LandUseCapability)
+  CatchmentLandUseCapability <- st_intersection(CatchmentLandUse,LandUseCapability)
   
-  #Get the % area of each land use capability polygon
-  CatchmentLandUseCapability$area <- expanse(CatchmentLandUseCapability)
+  CatchmentLandUseCapability <- st_collection_extract(CatchmentLandUseCapability, "POLYGON")
+  
+  #Get the % area of each land use capability polygon within each land use type
+  CatchmentLandUseCapability$area <- st_area(CatchmentLandUseCapability) %>% units::set_units(NULL) / 10000
   
   #Convert to a data frame with just the attributes of interest
   ThisCatchmentsOutputData <- as.data.frame(CatchmentLandUseCapability) %>% 
-    select(LUC = lcorrclass,area)
+    select(LUC = lcorrclass,LandUse,area)
   
   #Sum the areas for each land use capable type
-  ThisCatchmentsOutputData <- ThisCatchmentsOutputData %>% group_by(LUC) %>% dplyr::summarise(area=sum(area))
+  #browser()
+  ThisCatchmentsOutputData <- ThisCatchmentsOutputData %>% group_by(LUC,LandUse) %>% dplyr::summarise(area.ha=sum(area))
 
-  #Convert the area to a percentage
-  ThisCatchmentsOutputData$area.pct = round(ThisCatchmentsOutputData$area / CatchmentArea * 100,0)
+  #Round the area to nearest 0.1 of a hectare
+  ThisCatchmentsOutputData$area.ha = round(ThisCatchmentsOutputData$area.ha,1)
   
   ThisCatchmentsOutputData$sID <- WaterQualitySite
   
-  LUCOutputData <- dplyr::bind_rows(LUCOutputData,ThisCatchmentsOutputData %>% select(!area))
+  LUCOutputData <- dplyr::bind_rows(LUCOutputData,ThisCatchmentsOutputData)
 }
 End_Time = Sys.time()
 End_Time - Start_Time
 
 #write to a csv file
-write.table(LUCOutputData,file=file.path(ProjectDataDirectory,"LUCDataV0.csv"),sep=",",row.names = FALSE,append=FALSE,quote = FALSE)
+write.table(LUCOutputData,file=file.path(ProjectDataDirectory,"LUCDataV1.csv"),sep=",",row.names = FALSE,append=FALSE,quote = FALSE)
 ```
 
 
