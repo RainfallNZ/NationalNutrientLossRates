@@ -35,6 +35,7 @@ Topright at Easting=2100000, Northing=6200000
 FarmScale are 2.50 km x 2.50 km scale grid aligned to the CatchmentScale Grid
 We need a grid with FarmScale rows within each CatchmentScaleCell, one with columns within each catchmentScaleCell, and one with CatchmentScale row number, and one with CatchmentScaleColumn Number
 ```{r}
+
 ExtentCoordinates <- data.frame("Easting"=c(1000000,2100000),"Northing"=c(4700000,6200000))
 ExtentPolygon <- ExtentCoordinates %>% 
   st_as_sf(coords = c("Easting","Northing"),crs= "epsg:2193") %>%
@@ -49,7 +50,7 @@ CatchmentScaleGridColumn <- rast(CatchmentScaleGrid,vals=colFromCell(CatchmentSc
 CatchmentScalePolygonGrid <-sf::st_as_sf(st_make_grid(vect(ExtentPolygon), 
                                           cellsize = CatchmentScaleResolution))
 
-#This next line gets the centroid coordinates of each polygon, subtracts the bottom left coordinates and half the cell resolution, converts them to km, and and adds 1 (to keep indexing from 1) and converts to a fixed width format
+#This next line gets the centroid coordinates of each polygon, subtracts the bottom left coordinates and half the cell resolution, converts them to km, and adds 1 (to keep indexing from 1) and converts to a fixed width format
 NumericIDs <- st_centroid(st_geometry(CatchmentScalePolygonGrid)) %>% st_coordinates() %>% as.data.frame() %>% mutate(across(1,~((. - ExtentCoordinates$Easting[1] - CatchmentScaleResolution/2) / 10000 + 1))) %>% 
   mutate(across(2,~((. - ExtentCoordinates$Northing[1] - CatchmentScaleResolution/2) / 10000 + 1))) %>% 
   mutate_all(~sprintf("%03g",.))
@@ -74,6 +75,25 @@ FarmScaleCSRow <- disagg(CatchmentScaleGridRow,fact=4,method="near")
 FarmScaleCSColumn <- disagg(CatchmentScaleGridColumn,fact=4,method="near")
 
 FarmScaleStack <- rast(list("FSRow"=FarmScaleGridRow,"FSCol"=FarmScaleGridColumn,"CSRow"=FarmScaleCSRow,"CSCol"=FarmScaleCSColumn))
+
+
+
+FarmScalePolygonGrid <-sf::st_as_sf(st_make_grid(vect(ExtentPolygon), 
+                                          cellsize = FarmScaleResolution))
+IndicesOfCSPolygonsThatTheFarmPolygonsAreWithin <-  st_within(FarmScalePolygonGrid,CatchmentScalePolygonGrid,sparse = TRUE)
+FarmScalePolygonGrid$CSID <- CatchmentScalePolygonGrid$CSID[unlist(IndicesOfCSPolygonsThatTheFarmPolygonsAreWithin)]
+#Convert to a SpatVector for further procesing iusing Terra
+FarmScalePolygonGrid <- terra::vect(FarmScalePolygonGrid)
+
+for(layer in c(1,2)){
+  FarmScalePolygonGrid <- terra::intersect(FarmScalePolygonGrid,terra::as.polygons(FarmScaleStack[[layer]]))
+}
+FarmScalePolygonGrid$FSID <- paste0("FS",sprintf("%02d",FarmScalePolygonGrid$FSCol),sprintf("%02d",FarmScalePolygonGrid$FSRow))
+
+#Convert back to a special features object because terra::writeVector seems a bit buggy
+FarmScalePolygonGrid <- sf::st_as_sf(FarmScalePolygonGrid[,c("FSID","CSID")])
+
+FarmScalePolygonGrid %>%  st_write(file.path(GISDirectory,"SrinivasanTypes.gpkg"),layer = "FarmScaleGrid", delete_layer = TRUE)
 ```
 
 
